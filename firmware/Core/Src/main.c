@@ -90,6 +90,8 @@ int main(void)
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
+  HAL_TIM_Base_Start(&htim1);  // 启动 TIM1 定时器
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
