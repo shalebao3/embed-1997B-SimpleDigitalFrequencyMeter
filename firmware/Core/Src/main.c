@@ -90,7 +90,7 @@ int main(void)
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
-  HAL_TIM_Base_Start(&htim1);  // 启动 TIM1 定时器
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);  // 启动 TIM1 定时器产生 PWM 信号，使用 TIM1 的通道 1
 
   /* USER CODE END 2 */
 
