@@ -27,8 +27,6 @@ uint8_t MeasurementHw_FrequencyCounterStart(void)
     }
 
     frequency_counter_overflow_count = 0U;
-    frequency_counter_latched_count = 0U;
-    frequency_counter_ready = 0U;
 
     __HAL_TIM_SET_COUNTER(&htim2, 0U);
     __HAL_TIM_SET_COUNTER(&htim4, 0U);
@@ -48,6 +46,11 @@ uint8_t MeasurementHw_FrequencyCounterStart(void)
         (void)HAL_TIM_Base_Stop_IT(&htim2);
         return 0U;
     }
+
+    /* Only consume the previous ready result after the new measurement has
+     * started successfully. This lets the upper layer retry if HAL start fails.
+     */
+    frequency_counter_ready = 0U;
 
     return 1U;
 }
