@@ -4,13 +4,13 @@
 #include <stdint.h>
 
 /**
- * @brief Start the self-calibration process.
- * @return 1 if the calibration started successfully, 0 otherwise.
+ * @brief 启动自校功能，输出 1MHz 自校时标信号。
+ * @return 启动成功返回 1，启动失败返回 0。
  */
 uint8_t SelfCalibration_Start(void);
 
 /**
- * @brief Stop the self-calibration process.
+ * @brief 停止自校功能，并关闭 1MHz 自校时标输出。
  */
 void SelfCalibration_Stop(void);
 
