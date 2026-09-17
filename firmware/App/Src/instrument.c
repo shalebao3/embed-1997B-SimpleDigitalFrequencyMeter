@@ -1,5 +1,6 @@
 #include "instrument.h"
 
+#include "frequency_meter.h"
 #include "main.h"
 #include "self_calibration.h"
 
@@ -10,8 +11,14 @@ void Instrument_Init(void)
     {
         Error_Handler();
     }
+
+    if (!FrequencyMeter_Init())
+    {
+        Error_Handler();
+    }
 }
 
 void Instrument_Task(void)
 {
+    FrequencyMeter_Task();
 }
