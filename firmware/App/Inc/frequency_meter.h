@@ -4,29 +4,29 @@
 #include <stdint.h>
 
 /**
- * @brief Initialize the high-frequency gate-count measurement loop.
- * @return 1 if the first measurement started successfully, 0 otherwise.
+ * @brief 初始化高频闸门计数测频模块，并启动第一轮频率测量。
+ * @return 启动成功返回 1，启动失败返回 0。
  */
 uint8_t FrequencyMeter_Init(void);
 
 /**
- * @brief Poll the measurement state and start the next gate when one finishes.
+ * @brief 轮询频率测量状态；当前一轮完成后保存结果并启动下一轮测量。
  */
 void FrequencyMeter_Task(void);
 
 /**
- * @brief Return the latest measured frequency.
+ * @brief 获取最近一次已经完成的频率测量结果。
  *
- * The current hardware gate is fixed at one second, so the latched pulse count
- * is numerically equal to frequency in hertz.
+ * 当前硬件闸门固定为 1 秒，因此闸门期间锁存的总脉冲数在数值上
+ * 直接等于频率值，单位为 Hz。
  *
- * @return Latest frequency in hertz.
+ * @return 最近一次测得的频率，单位 Hz。
  */
 uint32_t FrequencyMeter_GetFrequencyHz(void);
 
 /**
- * @brief Check whether at least one complete measurement is available.
- * @return 1 after the first gate has completed, 0 before that.
+ * @brief 判断是否已经至少完成过一次有效的频率测量。
+ * @return 已有有效测量结果返回 1，否则返回 0。
  */
 uint8_t FrequencyMeter_IsValid(void);
 
