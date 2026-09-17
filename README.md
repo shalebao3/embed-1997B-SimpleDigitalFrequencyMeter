@@ -161,9 +161,9 @@ SYSCLK 72MHz
 | 定时器 | 第一版职责 | 主要工作模式 | 状态 |
 | --- | --- | --- | --- |
 | TIM1 | 1MHz 自校时标输出 | PWM Output | 已配置并启动 |
-| TIM2 | 高频频率测量 | ETR 外部脉冲计数 + Gated Slave | 已配置，底层计数代码已实现 |
+| TIM2 | 高频频率测量 | ETR 外部脉冲计数 + Gated Slave | 已配置并接入连续测量流程 |
 | TIM3 | 周期 / 脉冲宽度测量 | Input Capture | 待配置 |
-| TIM4 | 高频测频闸门时间基准 | One Pulse + TRGO Enable | 已配置，1s 闸门代码已实现 |
+| TIM4 | 高频测频闸门时间基准 | One Pulse + TRGO Enable | 已配置并接入连续测量流程 |
 
 ### 5.1 TIM1：1MHz 自校信号
 
@@ -209,7 +209,7 @@ PA8 配置为复用推挽输出，GPIO Speed 使用 Medium。
 
 ### 5.2 TIM2 + TIM4：高频闸门计数链路
 
-当前高频测频链路已经完成 CubeMX/HAL 配置和第一版底层软件实现：
+当前高频测频链路已经完成 CubeMX/HAL 配置和软件闭环：
 
 ```text
 外部脉冲
@@ -262,7 +262,7 @@ TIM4 使用 One Pulse 模式。TIM4 启动时 `CEN=1`，`TRGO=ENABLE` 打开 TIM
 total_count = overflow_count × 65536 + CNT
 ```
 
-当前 `measurement_hw` 已提供：
+`measurement_hw` 已提供：
 
 ```text
 MeasurementHw_FrequencyCounterStart()
@@ -270,11 +270,47 @@ MeasurementHw_FrequencyCounterIsReady()
 MeasurementHw_FrequencyCounterGetCount()
 ```
 
-同时已实现 `HAL_TIM_PeriodElapsedCallback()`：
+并实现 `HAL_TIM_PeriodElapsedCallback()`：
 
 - TIM2 Update：累计 16 位计数器溢出次数；
 - TIM4 Update：在闸门关闭后读取 TIM2 CNT，并锁存最终总脉冲数；
-- 对 TIM2 恰好在闸门边界产生 Update、但中断尚未执行的情况进行补偿，避免漏计一次 65536 计数。
+- 对 TIM2 恰好在闸门边界产生 Update、但中断尚未执行的情况进行补偿，避免漏计一次 65536；
+- 下一轮启动失败时保留上一轮 ready/result，允许上层继续重试。
+
+当前新增 `frequency_meter` 应用层：
+
+```text
+FrequencyMeter_Init()
+FrequencyMeter_Task()
+FrequencyMeter_GetFrequencyHz()
+FrequencyMeter_IsValid()
+```
+
+其运行过程为：
+
+```text
+Instrument_Init()
+      │
+      ├── 启动 TIM1 自校 PWM
+      │
+      └── FrequencyMeter_Init()
+                │
+                ▼
+       启动第一轮 1s 测量
+
+Instrument_Task()
+      │
+      ▼
+FrequencyMeter_Task()
+      │
+      ├── 未完成 → 立即返回，不阻塞 CPU
+      │
+      └── 已完成
+            │
+            ├── 读取 total_count
+            ├── 保存 frequency_hz
+            └── 立即启动下一轮 1s 测量
+```
 
 由于当前闸门固定为 1 秒：
 
@@ -282,7 +318,7 @@ MeasurementHw_FrequencyCounterGetCount()
 frequency_hz = total_count
 ```
 
-目前该底层链路已经具备一次完整高频计数测量所需的硬件接口；下一步是在 `frequency_meter` / `instrument` 层调用它并形成连续测量状态机。
+至此，TIM2 + TIM4 的高频频率测量软件闭环已经形成。当前尚未接显示，因此测量结果暂存在 `frequency_meter` 内，可通过 `FrequencyMeter_GetFrequencyHz()` 读取。
 
 ---
 
@@ -352,9 +388,7 @@ main.c
 instrument
   │
   ├── self_calibration
-  │
-  ├── frequency_meter       （下一步）
-  │
+  ├── frequency_meter       （已接入 TIM2/TIM4）
   └── interval_meter        （后续）
   │
   ▼
@@ -369,9 +403,9 @@ HAL / TIM / GPIO / IRQ
 | 层 | 职责 |
 | --- | --- |
 | `Core/` | CubeMX 生成代码；时钟、GPIO、TIM 等底层初始化 |
-| `instrument` | 仪器应用编排；模式管理、任务调度 |
+| `instrument` | 仪器应用编排；当前负责启动自校和高频频率测量，并在主循环调用测频任务 |
 | `self_calibration` | 1MHz 自校业务逻辑 |
-| `frequency_meter` | 频率测量算法；下一步加入 |
+| `frequency_meter` | 高频频率测量状态管理；保存最新频率结果并连续触发下一轮测量 |
 | `interval_meter` | 周期 / 脉宽等时间间隔测量；后续加入 |
 | `measurement_hw` | 对 HAL、Timer、CNT、CCR、中断等硬件操作进行集中封装；已包含 TIM1 自校与 TIM2/TIM4 高频计数底层接口 |
 | `main.c` | 系统初始化后只调用 `Instrument_Init()` 和 `Instrument_Task()` |
@@ -401,16 +435,18 @@ App 描述“项目如何使用硬件”
 - TIM4 TRGO = ENABLE，已经建立 TIM4 → TIM2 的纯硬件 Gate 联动；
 - TIM4 Update 中断已启用；
 - `measurement_hw` 已实现 TIM2/TIM4 一次测量的启动、溢出统计、闸门结束锁存和结果读取；
+- 新增 `frequency_meter`，实现高频测频结果保存和连续非阻塞测量；
+- `Instrument_Init()` 已启动第一轮高频测量；
+- `Instrument_Task()` 已接入 `FrequencyMeter_Task()`；
+- CMake 已加入 `frequency_meter.c`；
 - `Core` 与 `App` 业务层分离；
-- `instrument / self_calibration / measurement_hw` 第一版分层；
-- CMake 已接入 `App/Src` 和 `App/Inc`；
-- GitHub Actions ARM Debug Build 已通过此前版本。
+- GitHub Actions ARM Debug Build 已验证 TIM2/TIM4 底层实现可编译。
 
-当前进行中：
+当前下一步：
 
-1. 将 TIM2/TIM4 底层计数接口接入 `frequency_meter`；
-2. 在 `Instrument_Task()` 中形成“启动 → 等待 → 读取 → 再启动”的非阻塞连续测量状态机；
-3. 硬件到位后验证 1MHz 自校输出回接 PA0 时，1 秒计数应接近 1,000,000。
+1. 等待最新 CI 验证完整 `frequency_meter + instrument + CMake` 集成；
+2. 硬件到位后优先做回环验证：`PA8(TIM1 1MHz) → PA0(TIM2 ETR)`，理论上一秒结果应接近 `1,000,000Hz`；
+3. 在硬件验证前，可以继续做代码级边界检查和调试观测接口，但暂不把显示、TIM3 等模块混进这一轮。
 
 后续：
 
