@@ -4,39 +4,39 @@
 #include <stdint.h>
 
 /**
- * @brief Start the self-calibration process.
- * @return 1 if the calibration started successfully, 0 otherwise.
+ * @brief 启动 1MHz 自校时标输出。
+ * @return 启动成功返回 1，启动失败返回 0。
  */
 uint8_t MeasurementHw_SelfCalibrationStart(void);
 
 /**
- * @brief Stop the self-calibration process.
+ * @brief 停止 1MHz 自校时标输出。
  */
 void MeasurementHw_SelfCalibrationStop(void);
 
 /**
- * @brief Start one high-frequency gate-count measurement.
+ * @brief 启动一轮高频闸门计数测量。
  *
- * TIM2 counts external pulses on PA0/ETR while TIM4 keeps the hardware gate
- * open for one second. TIM2 update interrupts extend the 16-bit counter.
+ * TIM2 通过 PA0/ETR 对外部脉冲计数，TIM4 负责保持 1 秒硬件闸门；
+ * TIM2 的更新中断用于扩展 16 位 CNT 的计数范围。
  *
- * @return 1 if TIM2 and TIM4 started successfully, 0 otherwise.
+ * @return TIM2 和 TIM4 均启动成功返回 1，否则返回 0。
  */
 uint8_t MeasurementHw_FrequencyCounterStart(void);
 
 /**
- * @brief Check whether the current gate-count measurement has finished.
- * @return 1 when a result is ready, 0 otherwise.
+ * @brief 判断当前一轮闸门计数是否已经完成。
+ * @return 已有新的锁存结果返回 1，否则返回 0。
  */
 uint8_t MeasurementHw_FrequencyCounterIsReady(void);
 
 /**
- * @brief Read the pulse count latched at the end of the one-second gate.
+ * @brief 获取 1 秒闸门结束时锁存的外部脉冲总数。
  *
- * With the current one-second gate, the returned pulse count is numerically
- * equal to the measured frequency in hertz.
+ * 当前闸门固定为 1 秒，因此返回的总脉冲数在数值上直接等于
+ * 被测信号的频率值，单位为 Hz。
  *
- * @return Total number of external pulses counted during the gate window.
+ * @return 当前一轮闸门窗口内统计到的外部脉冲总数。
  */
 uint32_t MeasurementHw_FrequencyCounterGetCount(void);
 
