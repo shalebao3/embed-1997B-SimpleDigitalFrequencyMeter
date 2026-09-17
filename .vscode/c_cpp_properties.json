@@ -1,0 +1,13 @@
+{
+    "configurations": [
+        {
+            "name": "STM32F103C8T6",
+            "compileCommands": [
+                "${workspaceFolder}/firmware/build/Debug/compile_commands.json"
+            ],
+            "cStandard": "c11"
+        }
+    ],
+    "version": 4,
+    "enableConfigurationSquiggles": true
+}
