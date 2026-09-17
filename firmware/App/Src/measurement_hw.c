@@ -17,16 +17,31 @@ static volatile uint8_t frequency_counter_ready = 0U;
 /* 高频闸门计数运行状态：0 表示未测量，1 表示 TIM2/TIM4 正在进行一轮测量。 */
 static volatile uint8_t frequency_counter_running = 0U;
 
+/**
+ * @brief 启动 1MHz 自校时标输出。
+ * @return TIM1 PWM 启动成功返回 1，启动失败返回 0。
+ */
 uint8_t MeasurementHw_SelfCalibrationStart(void)
 {
     return (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1) == HAL_OK) ? 1U : 0U;
 }
 
+/**
+ * @brief 停止 1MHz 自校时标输出。
+ */
 void MeasurementHw_SelfCalibrationStop(void)
 {
     (void)HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_1);
 }
 
+/**
+ * @brief 启动一轮 TIM2 + TIM4 高频闸门计数测量。
+ *
+ * 启动前会清零 TIM2/TIM4 的 CNT 和更新标志，并重置本轮 TIM2 溢出计数。
+ * TIM2 先进入外部脉冲计数状态，随后启动 TIM4 的 1 秒单脉冲闸门。
+ *
+ * @return 本轮测量成功启动返回 1；已经在测量或任一定时器启动失败时返回 0。
+ */
 uint8_t MeasurementHw_FrequencyCounterStart(void)
 {
     if (frequency_counter_running != 0U)
@@ -63,16 +78,32 @@ uint8_t MeasurementHw_FrequencyCounterStart(void)
     return 1U;
 }
 
+/**
+ * @brief 判断当前一轮高频闸门计数是否已经完成。
+ * @return 已有新的锁存结果返回 1，否则返回 0。
+ */
 uint8_t MeasurementHw_FrequencyCounterIsReady(void)
 {
     return frequency_counter_ready;
 }
 
+/**
+ * @brief 获取最近一次 TIM4 闸门结束时锁存的外部脉冲总数。
+ * @return 最近一次 1 秒闸门内统计到的外部脉冲总数。
+ */
 uint32_t MeasurementHw_FrequencyCounterGetCount(void)
 {
     return frequency_counter_latched_count;
 }
 
+/**
+ * @brief HAL 定时器周期到达回调，用于处理 TIM2 溢出扩展和 TIM4 闸门结束事件。
+ *
+ * TIM2 进入该回调时累计一次 16 位 CNT 溢出；TIM4 进入该回调时关闭本轮计数、
+ * 读取 TIM2 当前 CNT，并结合溢出次数锁存最终脉冲总数。
+ *
+ * @param htim 触发本次周期到达回调的定时器句柄。
+ */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM2)
