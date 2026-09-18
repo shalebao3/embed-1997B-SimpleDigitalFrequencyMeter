@@ -12,7 +12,8 @@ uint8_t IntervalMeter_Init(void);
 /**
  * @brief 轮询并消费最新一组 TIM3 DMA 原始捕获值。
  *
- * 当前阶段只保存两个 CCR1 原始时间戳，不进行溢出扩展和周期计算。
+ * 当前阶段会把 CCR1 与对应的 TIM3 溢出圈数组合成完整时间戳，
+ * 但暂不计算周期或频率。
  */
 void IntervalMeter_Task(void);
 
@@ -41,5 +42,17 @@ uint32_t IntervalMeter_GetFirstOverflowCount(void);
  * @brief 获取最近一次保存的第二个 CCR1 捕获时对应的 TIM3 累计溢出圈数。
  */
 uint32_t IntervalMeter_GetSecondOverflowCount(void);
+
+/**
+ * @brief 获取最近一次保存的第一个上升沿完整时间戳。
+ * @return 相对于本轮 TIM3 输入捕获启动时刻的 timer tick 总数。
+ */
+uint64_t IntervalMeter_GetFirstTimestampTicks(void);
+
+/**
+ * @brief 获取最近一次保存的第二个上升沿完整时间戳。
+ * @return 相对于本轮 TIM3 输入捕获启动时刻的 timer tick 总数。
+ */
+uint64_t IntervalMeter_GetSecondTimestampTicks(void);
 
 #endif
