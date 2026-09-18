@@ -380,6 +380,29 @@ uint8_t MeasurementHw_PulseWidthCaptureStart(void)
 }
 
 /**
+ * @brief 运行时启用或暂停 TIM3_CH2 下降沿中断。
+ *
+ * CH2 捕获通道在初始化时已经由 HAL 启用，这里只控制 CC2 中断请求，
+ * 不停止 TIM3 本体，因此不会影响 CH1 的 DMA 周期测量。
+ */
+void MeasurementHw_PulseWidthCaptureSetEnabled(uint8_t enabled)
+{
+    if (enabled != 0U)
+    {
+        tim3_pulse_pair_ready = 0U;
+        tim3_latest_rise_valid = 0U;
+        __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_CC2);
+        __HAL_TIM_ENABLE_IT(&htim3, TIM_IT_CC2);
+    }
+    else
+    {
+        __HAL_TIM_DISABLE_IT(&htim3, TIM_IT_CC2);
+        tim3_pulse_pair_ready = 0U;
+        tim3_latest_rise_valid = 0U;
+    }
+}
+
+/**
  * @brief 原子地读取并消费最近一组 TIM3 脉宽原始捕获结果。
  *
  * @param rise_capture 接收上升沿 CCR1。
