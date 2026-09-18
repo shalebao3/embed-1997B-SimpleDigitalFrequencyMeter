@@ -7,6 +7,13 @@
  */
 #define TIM3_COUNTER_RANGE_TICKS 65536ULL
 
+/* TIM3 当前计数频率为 72MHz（PSC=0）。
+ * 1 tick = 1 / 72MHz s = 125 / 9 ns。
+ * 使用约分后的整数比例避免在 STM32F103 上引入不必要的浮点运算。
+ */
+#define TIM3_TICK_NS_NUMERATOR 125ULL
+#define TIM3_TICK_NS_DENOMINATOR 9ULL
+
 /* 最近一次从 measurement_hw 消费到的第一个 CCR1 原始捕获值。
  * 数值范围：0U~65535U，表示第一次上升沿到来时 TIM3 CNT 被硬件锁存到 CCR1 的原始 16 位计数值。
  * 注意：0U 既可能是初始化默认值，也可能是真实捕获值；是否有效必须结合 interval_capture_valid 判断。
@@ -51,6 +58,12 @@ static uint64_t interval_second_timestamp_ticks = 0ULL;
  */
 static uint64_t interval_delta_ticks = 0ULL;
 
+/* 最近一组两个上升沿之间的周期，单位为 ns。
+ * 由 interval_delta_ticks 按 TIM3 72MHz 计数时基换算得到。
+ * 0ULL 表示尚未得到有效周期，或当前结果无效。
+ */
+static uint64_t interval_period_ns = 0ULL;
+
 /* 原始捕获结果有效标志。
  * 状态值：
  * 0U：尚未从 measurement_hw 成功消费到一组完整的两个 CCR1 捕获值。
@@ -77,6 +90,22 @@ static uint64_t IntervalMeter_BuildTimestamp(
 }
 
 /**
+ * @brief 将 TIM3 timer tick 数换算为纳秒周期。
+ *
+ * 当前 TIM3 CNT 时钟为 72MHz，因此 1 tick = 125/9 ns。
+ * 这里在除法前加上分母的一半进行四舍五入，得到最接近的整数纳秒值。
+ *
+ * @param ticks 两个上升沿之间经过的 TIM3 timer tick 数。
+ * @return 对应的周期，单位为 ns。
+ */
+static uint64_t IntervalMeter_TicksToNanoseconds(uint64_t ticks)
+{
+    return ((ticks * TIM3_TICK_NS_NUMERATOR) +
+            (TIM3_TICK_NS_DENOMINATOR / 2ULL)) /
+           TIM3_TICK_NS_DENOMINATOR;
+}
+
+/**
  * @brief 初始化时间间隔测量模块并启动 TIM3_CH1 DMA 输入捕获。
  * @return 初始化成功返回 1，否则返回 0。
  */
@@ -89,6 +118,7 @@ uint8_t IntervalMeter_Init(void)
     interval_first_timestamp_ticks = 0ULL;
     interval_second_timestamp_ticks = 0ULL;
     interval_delta_ticks = 0ULL;
+    interval_period_ns = 0ULL;
     interval_capture_valid = 0U;
 
     return MeasurementHw_PeriodCaptureStart();
@@ -98,7 +128,7 @@ uint8_t IntervalMeter_Init(void)
  * @brief 轮询并消费最新一组 TIM3 DMA 原始捕获值。
  *
  * 当前阶段会把每个 CCR1 与对应的 TIM3 溢出圈数组合成完整时间戳，
- * 再计算两个上升沿之间经过的 delta_ticks；暂不换算成周期或频率。
+ * 再计算两个上升沿之间经过的 delta_ticks，并换算得到周期 ns；暂不计算频率。
  */
 void IntervalMeter_Task(void)
 {
@@ -133,11 +163,14 @@ void IntervalMeter_Task(void)
     {
         interval_delta_ticks =
             interval_second_timestamp_ticks - interval_first_timestamp_ticks;
+        interval_period_ns =
+            IntervalMeter_TicksToNanoseconds(interval_delta_ticks);
         interval_capture_valid = 1U;
     }
     else
     {
         interval_delta_ticks = 0ULL;
+        interval_period_ns = 0ULL;
         interval_capture_valid = 0U;
     }
 }
@@ -209,4 +242,13 @@ uint64_t IntervalMeter_GetSecondTimestampTicks(void)
 uint64_t IntervalMeter_GetDeltaTicks(void)
 {
     return interval_delta_ticks;
+}
+
+/**
+ * @brief 获取最近一组两个上升沿之间的周期。
+ * @return 周期，单位为 ns；尚无有效结果时返回 0。
+ */
+uint64_t IntervalMeter_GetPeriodNs(void)
+{
+    return interval_period_ns;
 }
