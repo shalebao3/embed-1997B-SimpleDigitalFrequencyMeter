@@ -1,6 +1,9 @@
 #include "frequency_meter.h"
 
 #include "measurement_hw.h"
+#include "main.h"
+
+#define FREQUENCY_RESULT_TIMEOUT_MS 2500U
 
 /* 最近一次已经完成并确认有效的频率测量结果，单位：Hz。
  * 数值含义：
@@ -16,6 +19,9 @@ static uint32_t frequency_hz = 0U;
  */
 static uint8_t frequency_valid = 0U;
 
+/* 最近一次得到非零有效闸门测量结果的系统毫秒时刻。 */
+static uint32_t frequency_last_result_tick_ms = 0U;
+
 /**
  * @brief 初始化高频闸门计数频率计，并启动第一轮测量。
  * @return 第一轮测量启动成功返回 1，启动失败返回 0。
@@ -24,6 +30,7 @@ uint8_t FrequencyMeter_Init(void)
 {
     frequency_hz = 0U;
     frequency_valid = 0U;
+    frequency_last_result_tick_ms = HAL_GetTick();
 
     return MeasurementHw_FrequencyCounterStart();
 }
@@ -33,13 +40,35 @@ uint8_t FrequencyMeter_Init(void)
  */
 void FrequencyMeter_Task(void)
 {
+    uint32_t now_ms = HAL_GetTick();
+
+    if ((frequency_valid != 0U) &&
+        ((uint32_t)(now_ms - frequency_last_result_tick_ms) >
+         FREQUENCY_RESULT_TIMEOUT_MS))
+    {
+        frequency_hz = 0U;
+        frequency_valid = 0U;
+    }
+
     if (MeasurementHw_FrequencyCounterIsReady() == 0U)
     {
         return;
     }
 
     frequency_hz = MeasurementHw_FrequencyCounterGetCount();
-    frequency_valid = 1U;
+
+    /* 1 秒闸门内 0 个脉冲视为当前没有可用的闸门法频率结果。
+     * 低频区仍可由 TIM3 周期法继续提供结果。
+     */
+    if (frequency_hz > 0U)
+    {
+        frequency_last_result_tick_ms = now_ms;
+        frequency_valid = 1U;
+    }
+    else
+    {
+        frequency_valid = 0U;
+    }
 
     (void)MeasurementHw_FrequencyCounterStart();
 }
