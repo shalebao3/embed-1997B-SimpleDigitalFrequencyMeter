@@ -3,6 +3,7 @@
 #include "frequency_auto.h"
 #include "frequency_meter.h"
 #include "interval_meter.h"
+#include "instrument_ui.h"
 #include "main.h"
 #include "pulse_width_meter.h"
 #include "self_calibration.h"
@@ -36,6 +37,7 @@ void Instrument_Init(void)
     }
 
     FrequencyAuto_Init();
+    InstrumentUi_Init();
 }
 
 /**
@@ -47,4 +49,5 @@ void Instrument_Task(void)
     IntervalMeter_Task();
     PulseWidthMeter_Task();
     FrequencyAuto_Task();
+    InstrumentUi_Task();
 }
