@@ -10,6 +10,11 @@
  */
 #define TIM3_CAPTURE_DMA_LENGTH 2U
 
+/* 用半个 16 位计数范围判断捕获值位于回绕点的哪一侧。
+ * 该阈值只用于解决“输入捕获”和“Update 回绕”几乎同时发生时的软件归属判断。
+ */
+#define TIM3_CAPTURE_OVERFLOW_HALF_RANGE 32768U
+
 /* TIM2 在当前 1 秒闸门测量期间发生的溢出次数，用于把 16 位 CNT 扩展为更大的总脉冲计数。
  * 数值含义：
  * 0U：本轮测量尚未发生 TIM2 溢出，或新一轮测量刚开始。
@@ -72,15 +77,57 @@ static volatile uint8_t tim3_capture_pair_ready = 0U;
  */
 static volatile uint32_t tim3_overflow_count = 0U;
 
-/* 第一次 CCR1 捕获对应的 TIM3 累计溢出次数。
- * 当前先在 DMA Half Complete 回调中记录；捕获与溢出几乎同时发生时的边界竞争将在下一步处理。
+/* 当前 DMA 这一组中，第一个 CCR1 捕获对应的临时溢出圈数。
+ * Half Complete 时写入，Complete 时再锁存到 tim3_first_overflow_count。
+ * 这样 Circular DMA 开始下一组后，不会覆盖上一组已经完成的数据。
  */
+static volatile uint32_t tim3_pending_first_overflow_count = 0U;
+
+/* 最近一组完整 DMA 捕获中，第一个 CCR1 对应的 TIM3 累计溢出次数。 */
 static volatile uint32_t tim3_first_overflow_count = 0U;
 
-/* 第二次 CCR1 捕获对应的 TIM3 累计溢出次数。
- * 当前先在 DMA Complete 回调中记录；捕获与溢出几乎同时发生时的边界竞争将在下一步处理。
- */
+/* 最近一组完整 DMA 捕获中，第二个 CCR1 对应的 TIM3 累计溢出次数。 */
 static volatile uint32_t tim3_second_overflow_count = 0U;
+
+/**
+ * @brief 根据 CCR1 捕获值和 TIM3 当前 Update 状态，确定该捕获属于哪一圈。
+ *
+ * 正常情况下直接使用 tim3_overflow_count。
+ * 如果 Update Flag 仍然挂起：
+ * - captured_value 较小，说明更可能是“先回绕、后捕获”，该捕获应属于下一圈；
+ * - captured_value 较大，说明更可能是“先捕获、后回绕”，不应把这次回绕算进去。
+ *
+ * 另外保留一个兜底判断：若 Update ISR 已经先处理完，UIF 已清零，但捕获值在高半区、
+ * 当前 CNT 已进入低半区，则说明很可能是“捕获后刚刚回绕”，需要把已经累计的一圈扣回。
+ *
+ * @param captured_value DMA 搬运得到的 CCR1 原始 16 位捕获值。
+ * @return 该捕获瞬间应对应的软件溢出圈数。
+ */
+static uint32_t MeasurementHw_TIM3CaptureOverflowSnapshot(uint16_t captured_value)
+{
+    uint32_t overflow_count = tim3_overflow_count;
+    uint32_t update_pending = __HAL_TIM_GET_FLAG(&htim3, TIM_FLAG_UPDATE);
+    uint16_t counter_now = (uint16_t)__HAL_TIM_GET_COUNTER(&htim3);
+
+    if (update_pending != RESET)
+    {
+        if (captured_value < TIM3_CAPTURE_OVERFLOW_HALF_RANGE)
+        {
+            overflow_count++;
+        }
+
+        return overflow_count;
+    }
+
+    if ((captured_value >= TIM3_CAPTURE_OVERFLOW_HALF_RANGE) &&
+        (counter_now < TIM3_CAPTURE_OVERFLOW_HALF_RANGE) &&
+        (overflow_count > 0U))
+    {
+        overflow_count--;
+    }
+
+    return overflow_count;
+}
 
 /**
  * @brief 启动 1MHz 自校时标输出。
@@ -252,12 +299,20 @@ uint8_t MeasurementHw_PeriodCaptureStart(void)
     tim3_capture_pair_ready = 0U;
 
     tim3_overflow_count = 0U;
+    tim3_pending_first_overflow_count = 0U;
     tim3_first_overflow_count = 0U;
     tim3_second_overflow_count = 0U;
 
     __HAL_TIM_SET_COUNTER(&htim3, 0U);
     __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_CC1);
     __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
+
+    /* CubeMX 当前把 DMA1_Channel6 和 TIM3 IRQ 都配置为同一优先级。
+     * 为了处理捕获与回绕几乎同时发生的边界情况，这里在自定义层明确让 DMA 高于 TIM3 Update：
+     * DMA 先锁存“捕获属于哪一圈”，TIM3 Update ISR 再更新实时总圈数。
+     */
+    HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 0U, 0U);
+    HAL_NVIC_SetPriority(TIM3_IRQn, 1U, 0U);
 
     /* TIM3_CH1 使用 DMA 搬运 CCR1；这里额外打开 Update 中断，只用于累计 CNT 回绕次数。 */
     __HAL_TIM_ENABLE_IT(&htim3, TIM_IT_UPDATE);
@@ -338,9 +393,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
  * @brief TIM 输入捕获 DMA 半传输完成回调。
  *
  * DMA 缓冲区长度为 2，因此第一个 CCR1 值搬入 buffer[0] 后触发 Half Complete。
- * 这里记录第一次捕获时对应的 TIM3 软件溢出计数。
- *
- * @note 当前尚未处理“捕获事件与 TIM3 Update 几乎同时发生”的边界竞争。
+ * 这里结合 CCR1 数值、Update Flag 和当前软件圈数，记录第一次捕获真正所属的圈数。
  * @param htim 触发本次回调的定时器句柄。
  */
 void HAL_TIM_IC_CaptureHalfCpltCallback(TIM_HandleTypeDef *htim)
@@ -348,7 +401,8 @@ void HAL_TIM_IC_CaptureHalfCpltCallback(TIM_HandleTypeDef *htim)
     if ((htim->Instance == TIM3) &&
         (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1))
     {
-        tim3_first_overflow_count = tim3_overflow_count;
+        tim3_pending_first_overflow_count =
+            MeasurementHw_TIM3CaptureOverflowSnapshot(tim3_capture_dma_buffer[0]);
     }
 }
 
@@ -356,7 +410,7 @@ void HAL_TIM_IC_CaptureHalfCpltCallback(TIM_HandleTypeDef *htim)
  * @brief TIM 输入捕获 DMA 完成回调。
  *
  * TIM3_CH1 的 DMA 每收集两个 CCR1 值后进入该回调，
- * 将 DMA 缓冲区中的两个捕获时间戳锁存出来，供上层读取。
+ * 将两个 CCR1 原始捕获值及其对应的溢出圈数一起锁存为一组完整结果。
  *
  * @param htim 触发本次回调的定时器句柄。
  */
@@ -368,8 +422,12 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
         tim3_capture_first = tim3_capture_dma_buffer[0];
         tim3_capture_second = tim3_capture_dma_buffer[1];
 
-        /* 第二个 CCR1 已经由 DMA 搬运完成，此时保存对应的软件溢出计数。 */
-        tim3_second_overflow_count = tim3_overflow_count;
+        /* 将这一组的两个“圈数快照”与两个 CCR1 一起锁存。
+         * first 的临时值来自 Half Complete；second 在 Complete 时现场判断。
+         */
+        tim3_first_overflow_count = tim3_pending_first_overflow_count;
+        tim3_second_overflow_count =
+            MeasurementHw_TIM3CaptureOverflowSnapshot(tim3_capture_dma_buffer[1]);
 
         tim3_capture_pair_ready = 1U;
     }
