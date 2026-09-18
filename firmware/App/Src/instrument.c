@@ -1,8 +1,10 @@
 #include "instrument.h"
 
+#include "frequency_auto.h"
 #include "frequency_meter.h"
 #include "interval_meter.h"
 #include "main.h"
+#include "pulse_width_meter.h"
 #include "self_calibration.h"
 
 /**
@@ -27,6 +29,13 @@ void Instrument_Init(void)
     {
         Error_Handler();
     }
+
+    if (!PulseWidthMeter_Init())
+    {
+        Error_Handler();
+    }
+
+    FrequencyAuto_Init();
 }
 
 /**
@@ -36,4 +45,6 @@ void Instrument_Task(void)
 {
     FrequencyMeter_Task();
     IntervalMeter_Task();
+    PulseWidthMeter_Task();
+    FrequencyAuto_Task();
 }
