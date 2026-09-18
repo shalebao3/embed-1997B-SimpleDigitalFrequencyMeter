@@ -13,6 +13,8 @@
  */
 #define TIM3_TICK_NS_NUMERATOR 125ULL
 #define TIM3_TICK_NS_DENOMINATOR 9ULL
+#define TIM3_COUNTER_HZ 72000000ULL
+#define MILLIHZ_PER_HZ 1000ULL
 
 /* 最近一次从 measurement_hw 消费到的第一个 CCR1 原始捕获值。
  * 数值范围：0U~65535U，表示第一次上升沿到来时 TIM3 CNT 被硬件锁存到 CCR1 的原始 16 位计数值。
@@ -64,6 +66,13 @@ static uint64_t interval_delta_ticks = 0ULL;
  */
 static uint64_t interval_period_ns = 0ULL;
 
+/* 最近一组两个上升沿之间对应的频率，单位为 mHz（毫赫兹）。
+ * 直接由 interval_delta_ticks 和 TIM3 72MHz 计数时基换算得到，
+ * 避免先把周期取整为 ns 后再求倒数造成额外舍入误差。
+ * 0ULL 表示尚未得到有效频率，或当前结果无效。
+ */
+static uint64_t interval_frequency_millihz = 0ULL;
+
 /* 原始捕获结果有效标志。
  * 状态值：
  * 0U：尚未从 measurement_hw 成功消费到一组完整的两个 CCR1 捕获值。
@@ -106,6 +115,27 @@ static uint64_t IntervalMeter_TicksToNanoseconds(uint64_t ticks)
 }
 
 /**
+ * @brief 根据 TIM3 timer tick 数计算输入信号频率。
+ *
+ * 当前 TIM3 CNT 时钟为 72MHz，因此：
+ * frequency_hz = 72000000 / ticks。
+ * 为保留小数精度，结果以 mHz（毫赫兹）表示，并在整数除法前加 ticks/2 四舍五入。
+ *
+ * @param ticks 两个相邻上升沿之间经过的 TIM3 timer tick 数。
+ * @return 对应频率，单位为 mHz；ticks 为 0 时返回 0。
+ */
+static uint64_t IntervalMeter_TicksToMilliHertz(uint64_t ticks)
+{
+    if (ticks == 0ULL)
+    {
+        return 0ULL;
+    }
+
+    return ((TIM3_COUNTER_HZ * MILLIHZ_PER_HZ) + (ticks / 2ULL)) /
+           ticks;
+}
+
+/**
  * @brief 初始化时间间隔测量模块并启动 TIM3_CH1 DMA 输入捕获。
  * @return 初始化成功返回 1，否则返回 0。
  */
@@ -119,6 +149,7 @@ uint8_t IntervalMeter_Init(void)
     interval_second_timestamp_ticks = 0ULL;
     interval_delta_ticks = 0ULL;
     interval_period_ns = 0ULL;
+    interval_frequency_millihz = 0ULL;
     interval_capture_valid = 0U;
 
     return MeasurementHw_PeriodCaptureStart();
@@ -128,7 +159,7 @@ uint8_t IntervalMeter_Init(void)
  * @brief 轮询并消费最新一组 TIM3 DMA 原始捕获值。
  *
  * 当前阶段会把每个 CCR1 与对应的 TIM3 溢出圈数组合成完整时间戳，
- * 再计算两个上升沿之间经过的 delta_ticks，并换算得到周期 ns；暂不计算频率。
+ * 再计算两个上升沿之间经过的 delta_ticks，并换算得到周期 ns 和频率 mHz。
  */
 void IntervalMeter_Task(void)
 {
@@ -165,12 +196,15 @@ void IntervalMeter_Task(void)
             interval_second_timestamp_ticks - interval_first_timestamp_ticks;
         interval_period_ns =
             IntervalMeter_TicksToNanoseconds(interval_delta_ticks);
+        interval_frequency_millihz =
+            IntervalMeter_TicksToMilliHertz(interval_delta_ticks);
         interval_capture_valid = 1U;
     }
     else
     {
         interval_delta_ticks = 0ULL;
         interval_period_ns = 0ULL;
+        interval_frequency_millihz = 0ULL;
         interval_capture_valid = 0U;
     }
 }
@@ -251,4 +285,13 @@ uint64_t IntervalMeter_GetDeltaTicks(void)
 uint64_t IntervalMeter_GetPeriodNs(void)
 {
     return interval_period_ns;
+}
+
+/**
+ * @brief 获取最近一组两个上升沿对应的周期法频率。
+ * @return 频率，单位为 mHz；尚无有效结果时返回 0。
+ */
+uint64_t IntervalMeter_GetFrequencyMilliHz(void)
+{
+    return interval_frequency_millihz;
 }
