@@ -14,6 +14,20 @@ static uint16_t interval_capture_first = 0U;
  */
 static uint16_t interval_capture_second = 0U;
 
+/* 最近一次完整原始捕获结果中，第一个 CCR1 捕获时对应的 TIM3 累计溢出圈数。
+ * 数值含义：
+ * 0U：捕获发生前 TIM3 尚未回绕，或模块尚未得到有效结果。
+ * n：第一次捕获发生时 TIM3 已累计回绕 n 次。
+ */
+static uint32_t interval_first_overflow_count = 0U;
+
+/* 最近一次完整原始捕获结果中，第二个 CCR1 捕获时对应的 TIM3 累计溢出圈数。
+ * 数值含义：
+ * 0U：捕获发生前 TIM3 尚未回绕，或模块尚未得到有效结果。
+ * n：第二次捕获发生时 TIM3 已累计回绕 n 次。
+ */
+static uint32_t interval_second_overflow_count = 0U;
+
 /* 原始捕获结果有效标志。
  * 状态值：
  * 0U：尚未从 measurement_hw 成功消费到一组完整的两个 CCR1 捕获值。
@@ -29,6 +43,8 @@ uint8_t IntervalMeter_Init(void)
 {
     interval_capture_first = 0U;
     interval_capture_second = 0U;
+    interval_first_overflow_count = 0U;
+    interval_second_overflow_count = 0U;
     interval_capture_valid = 0U;
 
     return MeasurementHw_PeriodCaptureStart();
@@ -44,14 +60,22 @@ void IntervalMeter_Task(void)
 {
     uint16_t first;
     uint16_t second;
+    uint32_t first_overflow_count;
+    uint32_t second_overflow_count;
 
-    if (MeasurementHw_PeriodCaptureTakePair(&first, &second) == 0U)
+    if (MeasurementHw_PeriodCaptureTakePair(
+            &first,
+            &first_overflow_count,
+            &second,
+            &second_overflow_count) == 0U)
     {
         return;
     }
 
     interval_capture_first = first;
     interval_capture_second = second;
+    interval_first_overflow_count = first_overflow_count;
+    interval_second_overflow_count = second_overflow_count;
     interval_capture_valid = 1U;
 }
 
@@ -78,4 +102,20 @@ uint16_t IntervalMeter_GetFirstCapture(void)
 uint16_t IntervalMeter_GetSecondCapture(void)
 {
     return interval_capture_second;
+}
+
+/**
+ * @brief 获取最近一次保存的第一个 CCR1 捕获时对应的 TIM3 累计溢出圈数。
+ */
+uint32_t IntervalMeter_GetFirstOverflowCount(void)
+{
+    return interval_first_overflow_count;
+}
+
+/**
+ * @brief 获取最近一次保存的第二个 CCR1 捕获时对应的 TIM3 累计溢出圈数。
+ */
+uint32_t IntervalMeter_GetSecondOverflowCount(void)
+{
+    return interval_second_overflow_count;
 }
