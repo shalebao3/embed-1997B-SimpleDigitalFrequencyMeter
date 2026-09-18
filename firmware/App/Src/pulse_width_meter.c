@@ -1,6 +1,9 @@
 #include "pulse_width_meter.h"
 
 #include "measurement_hw.h"
+#include "main.h"
+
+#define PULSE_WIDTH_RESULT_TIMEOUT_MS 3000U
 
 /* TIM3 为 16 位计数器；每次回绕代表额外经过 65536 个 timer tick。 */
 #define TIM3_COUNTER_RANGE_TICKS 65536ULL
@@ -18,6 +21,8 @@ static uint64_t pulse_width_ns = 0ULL;
  * 1U：pulse_width_ticks / pulse_width_ns 保存最近一次有效结果。
  */
 static uint8_t pulse_width_valid = 0U;
+static uint8_t pulse_width_enabled = 0U;
+static uint32_t pulse_width_last_result_tick_ms = 0U;
 
 /**
  * @brief 将 TIM3 溢出圈数和 16 位 CCR 组合成完整时间戳。
@@ -48,8 +53,32 @@ uint8_t PulseWidthMeter_Init(void)
     pulse_width_ticks = 0ULL;
     pulse_width_ns = 0ULL;
     pulse_width_valid = 0U;
+    pulse_width_enabled = 0U;
+    pulse_width_last_result_tick_ms = HAL_GetTick();
 
-    return MeasurementHw_PulseWidthCaptureStart();
+    if (MeasurementHw_PulseWidthCaptureStart() == 0U)
+    {
+        return 0U;
+    }
+
+    MeasurementHw_PulseWidthCaptureSetEnabled(0U);
+    return 1U;
+}
+
+/**
+ * @brief 启用或暂停 CH2 下降沿中断。
+ *
+ * 只在脉宽显示模式下启用，避免高频输入时产生不必要的大量 CC2 中断。
+ */
+void PulseWidthMeter_SetEnabled(uint8_t enabled)
+{
+    pulse_width_enabled = (enabled != 0U) ? 1U : 0U;
+    pulse_width_valid = 0U;
+    pulse_width_ticks = 0ULL;
+    pulse_width_ns = 0ULL;
+    pulse_width_last_result_tick_ms = HAL_GetTick();
+
+    MeasurementHw_PulseWidthCaptureSetEnabled(pulse_width_enabled);
 }
 
 /**
@@ -57,12 +86,27 @@ uint8_t PulseWidthMeter_Init(void)
  */
 void PulseWidthMeter_Task(void)
 {
+    uint32_t now_ms = HAL_GetTick();
     uint16_t rise_capture;
     uint16_t fall_capture;
     uint32_t rise_overflow_count;
     uint32_t fall_overflow_count;
     uint64_t rise_timestamp;
     uint64_t fall_timestamp;
+
+    if (pulse_width_enabled == 0U)
+    {
+        return;
+    }
+
+    if ((pulse_width_valid != 0U) &&
+        ((uint32_t)(now_ms - pulse_width_last_result_tick_ms) >
+         PULSE_WIDTH_RESULT_TIMEOUT_MS))
+    {
+        pulse_width_ticks = 0ULL;
+        pulse_width_ns = 0ULL;
+        pulse_width_valid = 0U;
+    }
 
     if (MeasurementHw_PulseWidthCaptureTakePair(
             &rise_capture,
@@ -84,6 +128,7 @@ void PulseWidthMeter_Task(void)
         pulse_width_ticks = fall_timestamp - rise_timestamp;
         pulse_width_ns =
             PulseWidthMeter_TicksToNanoseconds(pulse_width_ticks);
+        pulse_width_last_result_tick_ms = now_ms;
         pulse_width_valid = 1U;
     }
     else
