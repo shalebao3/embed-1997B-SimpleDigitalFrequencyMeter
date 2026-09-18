@@ -40,4 +40,36 @@ uint8_t MeasurementHw_FrequencyCounterIsReady(void);
  */
 uint32_t MeasurementHw_FrequencyCounterGetCount(void);
 
+/**
+ * @brief 启动 TIM3_CH1 输入捕获 DMA。
+ * @return 启动成功返回 1，否则返回 0。
+ */
+uint8_t MeasurementHw_PeriodCaptureStart(void);
+
+/**
+ * @brief 判断是否已经得到一组完整的 TIM3 DMA 捕获值。
+ * @return 已有一组新的捕获值返回 1，否则返回 0。
+ */
+uint8_t MeasurementHw_PeriodCaptureIsReady(void);
+
+/**
+ * @brief 获取最近一次 DMA 完成后锁存的第一个 CCR1 捕获值。
+ * @return 第一个 CCR1 时间戳。
+ */
+uint16_t MeasurementHw_PeriodCaptureGetFirst(void);
+
+/**
+ * @brief 获取最近一次 DMA 完成后锁存的第二个 CCR1 捕获值。
+ * @return 第二个 CCR1 时间戳。
+ */
+uint16_t MeasurementHw_PeriodCaptureGetSecond(void);
+
+/**
+ * @brief 原子地读取并消费最近一组 TIM3 DMA 捕获值。
+ * @param first 用于接收第一个 CCR1 捕获值的地址。
+ * @param second 用于接收第二个 CCR1 捕获值的地址。
+ * @return 成功消费到一组新数据返回 1，否则返回 0。
+ */
+uint8_t MeasurementHw_PeriodCaptureTakePair(uint16_t *first, uint16_t *second);
+
 #endif
