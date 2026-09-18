@@ -5,33 +5,66 @@
 /* TIM2 是 16 位计数器，CNT 从 0 计到 65535 后回绕，因此每次溢出代表 65536 个脉冲。 */
 #define TIM2_COUNTER_RANGE 65536UL
 
+/* TIM3 DMA 每组采集 2 个 CCR1 值：
+ * [0] 保存第一次上升沿捕获值，[1] 保存第二次上升沿捕获值。
+ */
 #define TIM3_CAPTURE_DMA_LENGTH 2U
 
-/* TIM2 在当前 1 秒闸门测量期间发生的溢出次数，用于把 16 位 CNT 扩展为更大的总脉冲计数。 */
+/* TIM2 在当前 1 秒闸门测量期间发生的溢出次数，用于把 16 位 CNT 扩展为更大的总脉冲计数。
+ * 数值含义：
+ * 0U：本轮测量尚未发生 TIM2 溢出，或新一轮测量刚开始。
+ * n：本轮测量已发生 n 次 TIM2 16 位回绕；每增加 1 代表额外累计 65536 个外部脉冲。
+ */
 static volatile uint32_t frequency_counter_overflow_count = 0U;
 
-/* TIM4 闸门结束时锁存的最终总脉冲数；1 秒闸门下该数值可直接对应频率 Hz。 */
+/* TIM4 闸门结束时锁存的最终总脉冲数；1 秒闸门下该数值可直接对应频率 Hz。
+ * 数值含义：
+ * 0U：初始化状态，或 1 秒闸门内没有检测到有效外部脉冲。
+ * >0U：最近一次完整 1 秒闸门内统计到的外部脉冲总数。
+ */
 static volatile uint32_t frequency_counter_latched_count = 0U;
 
-/* 测量结果就绪标志：0 表示结果尚未完成或已被消费，1 表示已有新的锁存结果可读取。 */
+/* 高频闸门计数结果就绪标志。
+ * 状态值：
+ * 0U：本轮结果尚未完成，或上一轮结果已经被上层开始下一轮测量时消费。
+ * 1U：TIM4 闸门已经结束，frequency_counter_latched_count 中有一组新的完整结果可读取。
+ */
 static volatile uint8_t frequency_counter_ready = 0U;
 
-/* 高频闸门计数运行状态：0 表示未测量，1 表示 TIM2/TIM4 正在进行一轮测量。 */
+/* TIM2 + TIM4 高频闸门计数运行状态。
+ * 状态值：
+ * 0U：当前没有正在执行的高频闸门计数测量，可以启动新一轮。
+ * 1U：TIM2/TIM4 正在执行一轮测量，此时禁止重复启动。
+ */
 static volatile uint8_t frequency_counter_running = 0U;
 
 /* TIM3_CH1 输入捕获 DMA 缓冲区。
- * 每次 PA6 出现上升沿，TIM3 会把 CNT 锁存到 CCR1，
- * DMA 再把 CCR1 自动搬到该数组。
+ * 数组元素含义：
+ * [0]：第一次 PA6 上升沿到来时，TIM3 硬件锁存到 CCR1 的 16 位 CNT 值。
+ * [1]：第二次 PA6 上升沿到来时，TIM3 硬件锁存到 CCR1 的 16 位 CNT 值。
+ * 初始均为 0U；DMA 运行后由硬件自动覆盖。
  */
 static volatile uint16_t tim3_capture_dma_buffer[TIM3_CAPTURE_DMA_LENGTH] = {0U, 0U};
 
-/* 最近一次完整 DMA 采集得到的第一个 CCR1 时间戳。 */
+/* 最近一次完整 DMA 采集得到的第一个 CCR1 原始时间戳。
+ * 数值含义：
+ * 0U：初始化后的默认值；只有 tim3_capture_pair_ready == 1U 时才代表一组新数据中的第一个捕获值。
+ * 1U~65535U：第一次上升沿对应的 TIM3 CCR1 原始 16 位计数值。
+ */
 static volatile uint16_t tim3_capture_first = 0U;
 
-/* 最近一次完整 DMA 采集得到的第二个 CCR1 时间戳。 */
+/* 最近一次完整 DMA 采集得到的第二个 CCR1 原始时间戳。
+ * 数值含义：
+ * 0U：初始化后的默认值；只有 tim3_capture_pair_ready == 1U 时才代表一组新数据中的第二个捕获值。
+ * 1U~65535U：第二次上升沿对应的 TIM3 CCR1 原始 16 位计数值。
+ */
 static volatile uint16_t tim3_capture_second = 0U;
 
-/* 两个输入捕获值是否已经采集完成。 */
+/* TIM3 DMA 一组两个 CCR1 捕获值的就绪标志。
+ * 状态值：
+ * 0U：尚未完成一组两个捕获值，或该组数据已经被 MeasurementHw_PeriodCaptureTakePair() 消费。
+ * 1U：tim3_capture_first / tim3_capture_second 中有一组新的完整捕获值等待上层读取。
+ */
 static volatile uint8_t tim3_capture_pair_ready = 0U;
 
 /**
