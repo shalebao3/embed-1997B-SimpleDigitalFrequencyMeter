@@ -32,4 +32,14 @@ uint16_t IntervalMeter_GetFirstCapture(void);
  */
 uint16_t IntervalMeter_GetSecondCapture(void);
 
+/**
+ * @brief 获取最近一次保存的第一个 CCR1 捕获时对应的 TIM3 累计溢出圈数。
+ */
+uint32_t IntervalMeter_GetFirstOverflowCount(void);
+
+/**
+ * @brief 获取最近一次保存的第二个 CCR1 捕获时对应的 TIM3 累计溢出圈数。
+ */
+uint32_t IntervalMeter_GetSecondOverflowCount(void);
+
 #endif
