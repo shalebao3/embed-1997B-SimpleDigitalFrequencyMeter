@@ -89,6 +89,25 @@ static volatile uint32_t tim3_first_overflow_count = 0U;
 /* 最近一组完整 DMA 捕获中，第二个 CCR1 对应的 TIM3 累计溢出次数。 */
 static volatile uint32_t tim3_second_overflow_count = 0U;
 
+/* TIM3_CH1 最近一次上升沿捕获，用于与 CH2 的下降沿配对测量高电平脉宽。 */
+static volatile uint16_t tim3_latest_rise_capture = 0U;
+static volatile uint32_t tim3_latest_rise_overflow_count = 0U;
+static volatile uint8_t tim3_latest_rise_valid = 0U;
+
+/* 最近一组“上升沿 → 下降沿”脉宽原始捕获结果。
+ * rise 来自 TIM3_CH1，fall 来自 TIM3_CH2（Indirect TI1，下降沿）。
+ */
+static volatile uint16_t tim3_pulse_rise_capture = 0U;
+static volatile uint32_t tim3_pulse_rise_overflow_count = 0U;
+static volatile uint16_t tim3_pulse_fall_capture = 0U;
+static volatile uint32_t tim3_pulse_fall_overflow_count = 0U;
+
+/* 脉宽捕获结果就绪标志。
+ * 0U：没有新的完整“上升沿 → 下降沿”结果。
+ * 1U：已有一组结果等待上层消费。
+ */
+static volatile uint8_t tim3_pulse_pair_ready = 0U;
+
 /**
  * @brief 根据 CCR1 捕获值和 TIM3 当前 Update 状态，确定该捕获属于哪一圈。
  *
@@ -314,6 +333,10 @@ uint8_t MeasurementHw_PeriodCaptureStart(void)
     tim3_first_overflow_count = 0U;
     tim3_second_overflow_count = 0U;
 
+    tim3_latest_rise_capture = 0U;
+    tim3_latest_rise_overflow_count = 0U;
+    tim3_latest_rise_valid = 0U;
+
     __HAL_TIM_SET_COUNTER(&htim3, 0U);
     __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_CC1);
     __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
@@ -329,6 +352,79 @@ uint8_t MeasurementHw_PeriodCaptureStart(void)
     {
         __HAL_TIM_DISABLE_IT(&htim3, TIM_IT_UPDATE);
         return 0U;
+    }
+
+    return 1U;
+}
+
+/**
+ * @brief 启动 TIM3_CH2 下降沿输入捕获，用于测量高电平脉冲宽度。
+ *
+ * 前提：CubeMX 中 TIM3_CH2 配置为 Input Capture Indirect TI，
+ * Polarity=Falling、Prescaler=DIV1、Filter=0。CH2 与 CH1 共用 TI1 输入，
+ * 因此无需额外占用一个外部输入引脚。
+ *
+ * @return 启动成功返回 1，否则返回 0。
+ */
+uint8_t MeasurementHw_PulseWidthCaptureStart(void)
+{
+    tim3_pulse_rise_capture = 0U;
+    tim3_pulse_rise_overflow_count = 0U;
+    tim3_pulse_fall_capture = 0U;
+    tim3_pulse_fall_overflow_count = 0U;
+    tim3_pulse_pair_ready = 0U;
+
+    __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_CC2);
+
+    return (HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_2) == HAL_OK) ? 1U : 0U;
+}
+
+/**
+ * @brief 原子地读取并消费最近一组 TIM3 脉宽原始捕获结果。
+ *
+ * @param rise_capture 接收上升沿 CCR1。
+ * @param rise_overflow_count 接收上升沿对应的 TIM3 溢出圈数。
+ * @param fall_capture 接收下降沿 CCR2。
+ * @param fall_overflow_count 接收下降沿对应的 TIM3 溢出圈数。
+ * @return 成功消费到一组新结果返回 1，否则返回 0。
+ */
+uint8_t MeasurementHw_PulseWidthCaptureTakePair(
+    uint16_t *rise_capture,
+    uint32_t *rise_overflow_count,
+    uint16_t *fall_capture,
+    uint32_t *fall_overflow_count)
+{
+    uint32_t primask;
+
+    if ((rise_capture == NULL) ||
+        (rise_overflow_count == NULL) ||
+        (fall_capture == NULL) ||
+        (fall_overflow_count == NULL))
+    {
+        return 0U;
+    }
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+
+    if (tim3_pulse_pair_ready == 0U)
+    {
+        if (primask == 0U)
+        {
+            __enable_irq();
+        }
+        return 0U;
+    }
+
+    *rise_capture = tim3_pulse_rise_capture;
+    *rise_overflow_count = tim3_pulse_rise_overflow_count;
+    *fall_capture = tim3_pulse_fall_capture;
+    *fall_overflow_count = tim3_pulse_fall_overflow_count;
+    tim3_pulse_pair_ready = 0U;
+
+    if (primask == 0U)
+    {
+        __enable_irq();
     }
 
     return 1U;
@@ -407,6 +503,11 @@ void HAL_TIM_IC_CaptureHalfCpltCallback(TIM_HandleTypeDef *htim)
     {
         tim3_pending_first_overflow_count =
             MeasurementHw_TIM3CaptureOverflowSnapshot(tim3_capture_dma_buffer[0]);
+
+        /* 保存最近一次上升沿，供 CH2 下降沿到来时配对测量高电平脉宽。 */
+        tim3_latest_rise_capture = tim3_capture_dma_buffer[0];
+        tim3_latest_rise_overflow_count = tim3_pending_first_overflow_count;
+        tim3_latest_rise_valid = 1U;
     }
 }
 
@@ -433,7 +534,31 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
         tim3_second_overflow_count =
             MeasurementHw_TIM3CaptureOverflowSnapshot(tim3_capture_dma_buffer[1]);
 
+        /* buffer[1] 同样是一个新的上升沿；更新“最近上升沿”供脉宽测量使用。 */
+        tim3_latest_rise_capture = tim3_capture_dma_buffer[1];
+        tim3_latest_rise_overflow_count = tim3_second_overflow_count;
+        tim3_latest_rise_valid = 1U;
+
         tim3_capture_pair_ready = 1U;
+        return;
+    }
+
+    if ((htim->Instance == TIM3) &&
+        (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2))
+    {
+        uint16_t fall_capture =
+            (uint16_t)HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
+        uint32_t fall_overflow_count =
+            MeasurementHw_TIM3CaptureOverflowSnapshot(fall_capture);
+
+        if (tim3_latest_rise_valid != 0U)
+        {
+            tim3_pulse_rise_capture = tim3_latest_rise_capture;
+            tim3_pulse_rise_overflow_count = tim3_latest_rise_overflow_count;
+            tim3_pulse_fall_capture = fall_capture;
+            tim3_pulse_fall_overflow_count = fall_overflow_count;
+            tim3_pulse_pair_ready = 1U;
+        }
     }
 }
 
