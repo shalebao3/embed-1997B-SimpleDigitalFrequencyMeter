@@ -23,7 +23,7 @@ static volatile uint8_t frequency_counter_running = 0U;
  * 每次 PA6 出现上升沿，TIM3 会把 CNT 锁存到 CCR1，
  * DMA 再把 CCR1 自动搬到该数组。
  */
-static uint16_t tim3_capture_dma_buffer[TIM3_CAPTURE_DMA_LENGTH] = {0U, 0U};
+static volatile uint16_t tim3_capture_dma_buffer[TIM3_CAPTURE_DMA_LENGTH] = {0U, 0U};
 
 /* 最近一次完整 DMA 采集得到的第一个 CCR1 时间戳。 */
 static volatile uint16_t tim3_capture_first = 0U;
@@ -111,6 +111,77 @@ uint8_t MeasurementHw_FrequencyCounterIsReady(void)
 uint32_t MeasurementHw_FrequencyCounterGetCount(void)
 {
     return frequency_counter_latched_count;
+}
+
+
+/**
+ * @brief 判断 TIM3 DMA 是否已经完成一组两个 CCR1 值的采集。
+ * @return 已经有一组新的捕获值返回 1，否则返回 0。
+ */
+uint8_t MeasurementHw_PeriodCaptureIsReady(void)
+{
+    return tim3_capture_pair_ready;
+}
+
+/**
+ * @brief 获取最近一次 DMA 完成后锁存的第一个 CCR1 捕获值。
+ * @return 第一个 CCR1 时间戳。
+ */
+uint16_t MeasurementHw_PeriodCaptureGetFirst(void)
+{
+    return tim3_capture_first;
+}
+
+/**
+ * @brief 获取最近一次 DMA 完成后锁存的第二个 CCR1 捕获值。
+ * @return 第二个 CCR1 时间戳。
+ */
+uint16_t MeasurementHw_PeriodCaptureGetSecond(void)
+{
+    return tim3_capture_second;
+}
+
+/**
+ * @brief 原子地读取并消费最近一组 TIM3 DMA 捕获值。
+ *
+ * 为避免 DMA 完成回调恰好在读取过程中更新锁存值，这里只在极短时间内
+ * 临时关闭中断，完成 first/second 的复制并清除 ready 标志。
+ *
+ * @param first 用于接收第一个 CCR1 捕获值的地址。
+ * @param second 用于接收第二个 CCR1 捕获值的地址。
+ * @return 成功消费到一组新数据返回 1；当前没有新数据或参数为空返回 0。
+ */
+uint8_t MeasurementHw_PeriodCaptureTakePair(uint16_t *first, uint16_t *second)
+{
+    uint32_t primask;
+
+    if ((first == NULL) || (second == NULL))
+    {
+        return 0U;
+    }
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+
+    if (tim3_capture_pair_ready == 0U)
+    {
+        if (primask == 0U)
+        {
+            __enable_irq();
+        }
+        return 0U;
+    }
+
+    *first = tim3_capture_first;
+    *second = tim3_capture_second;
+    tim3_capture_pair_ready = 0U;
+
+    if (primask == 0U)
+    {
+        __enable_irq();
+    }
+
+    return 1U;
 }
 
 /**
