@@ -52,6 +52,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/Src/interval_meter.c
     App/Src/pulse_width_meter.c
     App/Src/frequency_auto.c
+    App/Src/instrument_ui.c
+    App/Src/instrument_ui_port.c
 )
 
 # Add include paths
