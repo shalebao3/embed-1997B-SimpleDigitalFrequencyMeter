@@ -81,4 +81,28 @@ uint8_t MeasurementHw_PeriodCaptureTakePair(
     uint16_t *second,
     uint32_t *second_overflow_count);
 
+/**
+ * @brief 启动 TIM3_CH2 下降沿输入捕获，用于测量高电平脉冲宽度。
+ *
+ * CubeMX 需要将 TIM3_CH2 配置为 Input Capture Indirect TI，
+ * Falling / DIV1 / Filter 0。
+ *
+ * @return 启动成功返回 1，否则返回 0。
+ */
+uint8_t MeasurementHw_PulseWidthCaptureStart(void);
+
+/**
+ * @brief 原子地读取并消费最近一组 TIM3 脉宽原始捕获结果。
+ * @param rise_capture 接收上升沿 CCR1。
+ * @param rise_overflow_count 接收上升沿对应的 TIM3 溢出圈数。
+ * @param fall_capture 接收下降沿 CCR2。
+ * @param fall_overflow_count 接收下降沿对应的 TIM3 溢出圈数。
+ * @return 成功消费到一组新结果返回 1，否则返回 0。
+ */
+uint8_t MeasurementHw_PulseWidthCaptureTakePair(
+    uint16_t *rise_capture,
+    uint32_t *rise_overflow_count,
+    uint16_t *fall_capture,
+    uint32_t *fall_overflow_count);
+
 #endif
