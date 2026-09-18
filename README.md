@@ -162,7 +162,7 @@ SYSCLK 72MHz
 | --- | --- | --- | --- |
 | TIM1 | 1MHz 自校时标输出 | PWM Output | 已配置并启动 |
 | TIM2 | 高频频率测量 | ETR 外部脉冲计数 + Gated Slave | 已配置并接入连续测量流程 |
-| TIM3 | 周期 / 脉冲宽度测量 | Input Capture | 待配置 |
+| TIM3 | 周期 / 脉冲宽度测量 | CH1 上升沿 DMA + CH2 下降沿输入捕获 | 周期法已完成；脉宽软件已接入，CH2 CubeMX 配置待补 |
 | TIM4 | 高频测频闸门时间基准 | One Pulse + TRGO Enable | 已配置并接入连续测量流程 |
 
 ### 5.1 TIM1：1MHz 自校信号
@@ -324,7 +324,23 @@ frequency_hz = total_count
 
 ## 6. 周期与脉冲宽度方案
 
-周期和脉冲宽度本质上都是“两个边沿之间的时间间隔”，因此计划统一使用输入捕获实现。
+周期和脉冲宽度本质上都是“两个边沿之间的时间间隔”，当前统一使用 TIM3 输入捕获实现。
+
+TIM3_CH1 已使用 DMA 连续捕获 TI1 上升沿，并通过软件溢出计数把 16 位 CCR1 扩展为完整时间戳：
+
+```text
+timestamp = overflow_count × 65536 + CCR
+```
+
+相邻两个上升沿得到：
+
+```text
+delta_ticks = timestamp2 - timestamp1
+period_ns   = delta_ticks × 125 / 9
+frequency   = 72MHz / delta_ticks
+```
+
+周期法频率当前以 mHz 整数保存，避免 STM32F103 上不必要的浮点运算。
 
 ### 周期
 
@@ -348,7 +364,16 @@ T = timestamp_B - timestamp_A
 PulseWidth = timestamp_fall - timestamp_rise
 ```
 
-TIM3 的 PSC 会根据测量范围选择合适的 CNT 时间分辨率。低频周期测量不需要保持 13.89ns 的最高分辨率，否则 16 位 CNT 会频繁溢出；应在分辨率和单次计数范围之间取得平衡。
+当前软件方案：
+
+```text
+TIM3_CH1：Direct TI1，Rising，DMA
+TIM3_CH2：Indirect TI1，Falling，中断
+```
+
+CH1 保存最近一次上升沿时间戳，CH2 下降沿到来后与最近上升沿配对，得到高电平脉宽。App 层已经加入 `pulse_width_meter`，输出 `pulse_width_ticks` 和 `pulse_width_ns`。
+
+> 仍需在 CubeMX 中把 TIM3_CH2 配置为 Input Capture Indirect TI、Falling、DIV1、Filter 0 后重新生成代码；该静态外设配置不在 App 层动态修改。
 
 ---
 
@@ -388,8 +413,10 @@ main.c
 instrument
   │
   ├── self_calibration
-  ├── frequency_meter       （已接入 TIM2/TIM4）
-  └── interval_meter        （后续）
+  ├── frequency_meter       （TIM2/TIM4 闸门法）
+  ├── interval_meter        （TIM3 周期法）
+  ├── pulse_width_meter     （TIM3 脉宽）
+  └── frequency_auto        （高低频自动选择）
   │
   ▼
 measurement_hw
@@ -405,8 +432,10 @@ HAL / TIM / GPIO / IRQ
 | `Core/` | CubeMX 生成代码；时钟、GPIO、TIM 等底层初始化 |
 | `instrument` | 仪器应用编排；当前负责启动自校和高频频率测量，并在主循环调用测频任务 |
 | `self_calibration` | 1MHz 自校业务逻辑 |
-| `frequency_meter` | 高频频率测量状态管理；保存最新频率结果并连续触发下一轮测量 |
-| `interval_meter` | 周期 / 脉宽等时间间隔测量；后续加入 |
+| `frequency_meter` | TIM2/TIM4 1 秒闸门法；保存高频测量结果并连续触发下一轮 |
+| `interval_meter` | TIM3 周期法；完成 overflow 扩展、完整时间戳、delta_ticks、周期和周期法频率 |
+| `pulse_width_meter` | TIM3 上升沿到下降沿的高电平脉宽计算，输出 tick / ns |
+| `frequency_auto` | 在闸门法与周期法之间自动选择；当前使用 2kHz / 5kHz 滞回阈值，待实机校准 |
 | `measurement_hw` | 对 HAL、Timer、CNT、CCR、中断等硬件操作进行集中封装；已包含 TIM1 自校与 TIM2/TIM4 高频计数底层接口 |
 | `main.c` | 系统初始化后只调用 `Instrument_Init()` 和 `Instrument_Task()` |
 
