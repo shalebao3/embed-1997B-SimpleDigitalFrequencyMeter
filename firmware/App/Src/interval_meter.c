@@ -1,6 +1,9 @@
 #include "interval_meter.h"
 
 #include "measurement_hw.h"
+#include "main.h"
+
+#define INTERVAL_RESULT_TIMEOUT_MS 3000U
 
 /* TIM3 为 16 位计数器，一整圈包含 65536 个 timer tick。
  * 完整时间戳 = 累计溢出圈数 × 65536 + 当前 CCR1。
@@ -80,6 +83,11 @@ static uint64_t interval_frequency_millihz = 0ULL;
  */
 static uint8_t interval_capture_valid = 0U;
 
+/* 最近一次完成有效周期测量的系统毫秒时刻。
+ * 1Hz 输入下 DMA 长度为 2，一组结果约每 2 秒更新一次，因此超时取 3 秒。
+ */
+static uint32_t interval_last_result_tick_ms = 0U;
+
 /**
  * @brief 将 TIM3 的软件溢出圈数和 16 位 CCR1 组合成完整时间戳。
  *
@@ -151,6 +159,7 @@ uint8_t IntervalMeter_Init(void)
     interval_period_ns = 0ULL;
     interval_frequency_millihz = 0ULL;
     interval_capture_valid = 0U;
+    interval_last_result_tick_ms = HAL_GetTick();
 
     return MeasurementHw_PeriodCaptureStart();
 }
@@ -163,10 +172,21 @@ uint8_t IntervalMeter_Init(void)
  */
 void IntervalMeter_Task(void)
 {
+    uint32_t now_ms = HAL_GetTick();
     uint16_t first;
     uint16_t second;
     uint32_t first_overflow_count;
     uint32_t second_overflow_count;
+
+    if ((interval_capture_valid != 0U) &&
+        ((uint32_t)(now_ms - interval_last_result_tick_ms) >
+         INTERVAL_RESULT_TIMEOUT_MS))
+    {
+        interval_delta_ticks = 0ULL;
+        interval_period_ns = 0ULL;
+        interval_frequency_millihz = 0ULL;
+        interval_capture_valid = 0U;
+    }
 
     if (MeasurementHw_PeriodCaptureTakePair(
             &first,
@@ -198,6 +218,7 @@ void IntervalMeter_Task(void)
             IntervalMeter_TicksToNanoseconds(interval_delta_ticks);
         interval_frequency_millihz =
             IntervalMeter_TicksToMilliHertz(interval_delta_ticks);
+        interval_last_result_tick_ms = now_ms;
         interval_capture_valid = 1U;
     }
     else
