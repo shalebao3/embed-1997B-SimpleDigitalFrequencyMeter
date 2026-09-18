@@ -162,7 +162,7 @@ SYSCLK 72MHz
 | --- | --- | --- | --- |
 | TIM1 | 1MHz 自校时标输出 | PWM Output | 已配置并启动 |
 | TIM2 | 高频频率测量 | ETR 外部脉冲计数 + Gated Slave | 已配置并接入连续测量流程 |
-| TIM3 | 周期 / 脉冲宽度测量 | CH1 上升沿 DMA + CH2 下降沿输入捕获 | 周期法已完成；脉宽软件已接入，CH2 CubeMX 配置待补 |
+| TIM3 | 周期 / 脉冲宽度测量 | CH1 Direct TI1 上升沿 DMA + CH2 Indirect TI1 下降沿中断 | 已配置并接入周期 / 脉宽测量流程 |
 | TIM4 | 高频测频闸门时间基准 | One Pulse + TRGO Enable | 已配置并接入连续测量流程 |
 
 ### 5.1 TIM1：1MHz 自校信号
@@ -373,32 +373,43 @@ TIM3_CH2：Indirect TI1，Falling，中断
 
 CH1 保存最近一次上升沿时间戳，CH2 下降沿到来后与最近上升沿配对，得到高电平脉宽。App 层已经加入 `pulse_width_meter`，输出 `pulse_width_ticks` 和 `pulse_width_ns`。
 
-> 仍需在 CubeMX 中把 TIM3_CH2 配置为 Input Capture Indirect TI、Falling、DIV1、Filter 0 后重新生成代码；该静态外设配置不在 App 层动态修改。
+CubeMX 已将 TIM3_CH2 配置为 Input Capture Indirect TI、Falling、DIV1、Filter 0；CH1 / CH2 共用 PA6 / TI1，因此不额外占用 PA7。CH2 的 CC2 中断只在脉宽显示模式启用，避免高频输入时产生不必要的大量中断。
 
 ---
 
-## 7. 1～10 秒显示刷新时间
+## 7. 显示、模式 LED 与 1～10 秒刷新
 
-题目要求刷新时间 **1～10s 连续可调**。
-
-第一版计划使用：
+软件层已经加入 `instrument_ui` 和 `instrument_ui_port`：
 
 ```text
-电位器
-  │
-  ▼
-ADC
-  │
-  ▼
-映射到 1～10s
-  │
-  ▼
-显示刷新周期
+测量结果
+   │
+   ▼
+instrument_ui
+   ├── 频率模式
+   ├── 周期模式
+   ├── 脉宽模式
+   ├── 1~10s 刷新调度
+   └── stale / valid 状态
+   │
+   ▼
+instrument_ui_port
+   ├── Display Render
+   ├── Mode LED
+   └── Refresh ADC
 ```
 
-这样满足“连续可调”，而不是只用按键在 1s / 2s / 5s / 10s 等离散档位间切换。
+刷新时间使用 12 位 ADC 原始值连续映射：
 
-该刷新周期只控制显示更新频率，不应直接破坏底层测量时序。
+```text
+ADC = 0       → 1000ms
+ADC = 4095    → 10000ms
+中间值        → 线性映射到 1~10s
+```
+
+当前 `instrument_ui_port.c` 是默认空硬件适配层。后续确定 OLED / LCD / 数码管、LED GPIO 和 ADC 通道后，只替换该端口实现，不需要修改测量算法和 UI 调度逻辑。
+
+三种测量模式由 `InstrumentUiMode` 管理，模式切换时调用 `InstrumentUiPort_SetModeLed()`；具体三种 LED 的颜色和引脚留到硬件阶段决定。
 
 ---
 
@@ -416,7 +427,8 @@ instrument
   ├── frequency_meter       （TIM2/TIM4 闸门法）
   ├── interval_meter        （TIM3 周期法）
   ├── pulse_width_meter     （TIM3 脉宽）
-  └── frequency_auto        （高低频自动选择）
+  ├── frequency_auto        （高低频自动选择）
+  └── instrument_ui         （模式 / 显示 / 刷新调度）
   │
   ▼
 measurement_hw
@@ -436,7 +448,9 @@ HAL / TIM / GPIO / IRQ
 | `interval_meter` | TIM3 周期法；完成 overflow 扩展、完整时间戳、delta_ticks、周期和周期法频率 |
 | `pulse_width_meter` | TIM3 上升沿到下降沿的高电平脉宽计算，输出 tick / ns |
 | `frequency_auto` | 在闸门法与周期法之间自动选择；当前使用 2kHz / 5kHz 滞回阈值，待实机校准 |
-| `measurement_hw` | 对 HAL、Timer、CNT、CCR、中断等硬件操作进行集中封装；已包含 TIM1 自校与 TIM2/TIM4 高频计数底层接口 |
+| `instrument_ui` | 管理频率 / 周期 / 脉宽三种显示模式、1~10s 刷新调度和最新 UI 数据帧 |
+| `instrument_ui_port` | 显示设备、模式 LED、刷新 ADC 的硬件适配层；当前为 no-op，等待硬件选型 |
+| `measurement_hw` | 对 HAL、Timer、CNT、CCR、中断等硬件操作进行集中封装；包含 TIM1 自校、TIM2/TIM4 闸门计数和 TIM3 捕获底层接口 |
 | `main.c` | 系统初始化后只调用 `Instrument_Init()` 和 `Instrument_Task()` |
 
 原则：
@@ -449,6 +463,36 @@ App 描述“项目如何使用硬件”
 ---
 
 ## 9. 当前工程状态
+
+### 9.1 测量内核 V1
+
+不考虑模拟前端、电源和实机误差校准时，当前 STM32 测量内核 V1 已经形成完整软件闭环：
+
+```text
+外部数字边沿
+  ↓
+TIM / DMA / IRQ
+  ↓
+CNT / CCR / overflow
+  ↓
+timestamp / delta_ticks
+  ↓
+频率 / 周期 / 脉宽
+  ↓
+高低频自动选法
+  ↓
+valid / timeout
+  ↓
+instrument_ui
+```
+
+无信号 / 陈旧数据处理已经加入：
+
+- 1 秒闸门结果为 0 时，闸门法结果立即失效；
+- 闸门法超过 2.5s 没有新的非零结果时失效；
+- 周期法超过 3s 没有新的完整捕获结果时失效；
+- 脉宽超过 3s 没有新的完整“上升沿 → 下降沿”结果时失效；
+- `frequency_auto` 只从当前仍有效的数据源中选择最终频率。
 
 已完成：
 
@@ -471,19 +515,17 @@ App 描述“项目如何使用硬件”
 - `Core` 与 `App` 业务层分离；
 - GitHub Actions ARM Debug Build 已验证 TIM2/TIM4 底层实现可编译。
 
-当前下一步：
+当前软件阶段已经可以作为 **“测量内核 V1 完成”** 的里程碑。
 
-1. 等待最新 CI 验证完整 `frequency_meter + instrument + CMake` 集成；
-2. 硬件到位后优先做回环验证：`PA8(TIM1 1MHz) → PA0(TIM2 ETR)`，理论上一秒结果应接近 `1,000,000Hz`；
-3. 在硬件验证前，可以继续做代码级边界检查和调试观测接口，但暂不把显示、TIM3 等模块混进这一轮。
+后续进入硬件 / 联调阶段：
 
-后续：
-
-1. 配置 TIM3，完成周期和脉冲宽度输入捕获；
-2. 根据实际测量误差确定高低频方法切换阈值；
-3. 接入显示、模式 LED 和 1～10s 刷新调节；
-4. 设计并验证输入保护、比较器、施密特整形等模拟前端；
-5. 基本要求完成后再进入发挥部分。
+1. 用实物信号验证 TIM2/TIM4 高频闸门法、TIM3 周期法和脉宽法；
+2. 根据实际误差重新确定 2kHz / 5kHz 自动切换滞回阈值；
+3. 选定 OLED / LCD / 数码管后实现 `instrument_ui_port` 显示输出；
+4. 配置三种模式 LED 的 GPIO，并实现 `InstrumentUiPort_SetModeLed()`；
+5. 配置电位器 ADC，并让 `InstrumentUiPort_ReadRefreshAdcRaw()` 返回 0~4095；
+6. 设计并验证输入保护、比较器、施密特整形等模拟前端；
+7. 基本要求实机通过后再进入发挥部分。
 
 ---
 
