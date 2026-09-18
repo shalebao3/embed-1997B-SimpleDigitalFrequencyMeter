@@ -45,6 +45,12 @@ static uint64_t interval_first_timestamp_ticks = 0ULL;
  */
 static uint64_t interval_second_timestamp_ticks = 0ULL;
 
+/* 最近一组两个上升沿完整时间戳之间的差值，单位为 TIM3 timer tick。
+ * 计算方式：delta_ticks = second_timestamp - first_timestamp。
+ * 0ULL 表示尚未得到有效时间间隔，或当前结果无效。
+ */
+static uint64_t interval_delta_ticks = 0ULL;
+
 /* 原始捕获结果有效标志。
  * 状态值：
  * 0U：尚未从 measurement_hw 成功消费到一组完整的两个 CCR1 捕获值。
@@ -82,6 +88,7 @@ uint8_t IntervalMeter_Init(void)
     interval_second_overflow_count = 0U;
     interval_first_timestamp_ticks = 0ULL;
     interval_second_timestamp_ticks = 0ULL;
+    interval_delta_ticks = 0ULL;
     interval_capture_valid = 0U;
 
     return MeasurementHw_PeriodCaptureStart();
@@ -91,7 +98,7 @@ uint8_t IntervalMeter_Init(void)
  * @brief 轮询并消费最新一组 TIM3 DMA 原始捕获值。
  *
  * 当前阶段会把每个 CCR1 与对应的 TIM3 溢出圈数组合成完整时间戳，
- * 但暂不计算两个时间戳之间的差值，也暂不换算成周期或频率。
+ * 再计算两个上升沿之间经过的 delta_ticks；暂不换算成周期或频率。
  */
 void IntervalMeter_Task(void)
 {
@@ -119,7 +126,20 @@ void IntervalMeter_Task(void)
     interval_second_timestamp_ticks =
         IntervalMeter_BuildTimestamp(second_overflow_count, second);
 
-    interval_capture_valid = 1U;
+    /* 第二个上升沿应当晚于第一个上升沿。
+     * 若时间戳顺序异常，则本组结果不作为有效时间间隔继续向上层提供。
+     */
+    if (interval_second_timestamp_ticks > interval_first_timestamp_ticks)
+    {
+        interval_delta_ticks =
+            interval_second_timestamp_ticks - interval_first_timestamp_ticks;
+        interval_capture_valid = 1U;
+    }
+    else
+    {
+        interval_delta_ticks = 0ULL;
+        interval_capture_valid = 0U;
+    }
 }
 
 /**
@@ -179,4 +199,14 @@ uint64_t IntervalMeter_GetFirstTimestampTicks(void)
 uint64_t IntervalMeter_GetSecondTimestampTicks(void)
 {
     return interval_second_timestamp_ticks;
+}
+
+/**
+ * @brief 获取最近一组两个上升沿之间经过的 TIM3 timer tick 数。
+ * @return delta_ticks = second_timestamp - first_timestamp；
+ *         尚无有效结果时返回 0。
+ */
+uint64_t IntervalMeter_GetDeltaTicks(void)
+{
+    return interval_delta_ticks;
 }
