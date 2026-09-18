@@ -92,6 +92,12 @@ uint8_t MeasurementHw_PeriodCaptureTakePair(
 uint8_t MeasurementHw_PulseWidthCaptureStart(void);
 
 /**
+ * @brief 运行时启用或暂停 TIM3_CH2 下降沿中断，不停止 TIM3 本体。
+ * @param enabled 非 0 启用；0 暂停。
+ */
+void MeasurementHw_PulseWidthCaptureSetEnabled(uint8_t enabled);
+
+/**
  * @brief 原子地读取并消费最近一组 TIM3 脉宽原始捕获结果。
  * @param rise_capture 接收上升沿 CCR1。
  * @param rise_overflow_count 接收上升沿对应的 TIM3 溢出圈数。
