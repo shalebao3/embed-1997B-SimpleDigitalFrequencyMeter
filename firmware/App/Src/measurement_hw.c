@@ -237,28 +237,37 @@ uint16_t MeasurementHw_PeriodCaptureGetSecond(void)
 }
 
 /**
- * @brief 原子地读取并消费最近一组 TIM3 DMA 捕获值。
+ * @brief 原子地读取并消费最近一组 TIM3 DMA 捕获结果。
  *
- * 为避免 DMA 完成回调恰好在读取过程中更新锁存值，这里只在极短时间内
- * 临时关闭中断，完成 first/second 的复制并清除 ready 标志。
+ * 一组完整结果包含两个 CCR1 原始捕获值，以及两个捕获时刻各自对应的 TIM3 溢出圈数。
+ * 为避免 DMA Complete 回调恰好在读取过程中更新其中任一字段，这里只在极短时间内
+ * 临时关闭中断，一次性复制整组数据并清除 ready 标志。
  *
- * @param first 用于接收第一个 CCR1 捕获值的地址。
- * @param second 用于接收第二个 CCR1 捕获值的地址。
- * @return 成功消费到一组新数据返回 1；当前没有新数据或参数为空返回 0。
+ * @param first 用于接收第一个 CCR1 原始捕获值的地址。
+ * @param first_overflow_count 用于接收第一个捕获时刻累计溢出圈数的地址。
+ * @param second 用于接收第二个 CCR1 原始捕获值的地址。
+ * @param second_overflow_count 用于接收第二个捕获时刻累计溢出圈数的地址。
+ * @return 成功消费到一组新数据返回 1；当前没有新数据或任一参数为空返回 0。
  */
-uint8_t MeasurementHw_PeriodCaptureTakePair(uint16_t *first, uint16_t *second)
+uint8_t MeasurementHw_PeriodCaptureTakePair(
+    uint16_t *first,
+    uint32_t *first_overflow_count,
+    uint16_t *second,
+    uint32_t *second_overflow_count)
 {
     uint32_t primask;
 
-    if ((first == NULL) || (second == NULL))
+    if ((first == NULL) ||
+        (first_overflow_count == NULL) ||
+        (second == NULL) ||
+        (second_overflow_count == NULL))
     {
         return 0U;
     }
 
-    /* PRIMASK 是 ARM Cortex-M 内核里的一个寄存器，主要用来控制可屏蔽中断 */
-    /* PRIMASK = 0     ↓ 普通中断允许响应  PRIMASK = 1     ↓ 普通中断被屏蔽 */
+    /* PRIMASK 是 ARM Cortex-M 内核里的一个寄存器，主要用来控制可屏蔽中断。 */
+    /* PRIMASK = 0：普通中断允许响应；PRIMASK = 1：普通中断被屏蔽。 */
     primask = __get_PRIMASK();
-    /* 临时关闭中断 */
     __disable_irq();
 
     if (tim3_capture_pair_ready == 0U)
@@ -271,7 +280,9 @@ uint8_t MeasurementHw_PeriodCaptureTakePair(uint16_t *first, uint16_t *second)
     }
 
     *first = tim3_capture_first;
+    *first_overflow_count = tim3_first_overflow_count;
     *second = tim3_capture_second;
+    *second_overflow_count = tim3_second_overflow_count;
     tim3_capture_pair_ready = 0U;
 
     if (primask == 0U)
