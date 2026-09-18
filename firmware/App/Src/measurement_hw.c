@@ -160,7 +160,10 @@ uint8_t MeasurementHw_PeriodCaptureTakePair(uint16_t *first, uint16_t *second)
         return 0U;
     }
 
+    /* PRIMASK 是 ARM Cortex-M 内核里的一个寄存器，主要用来控制可屏蔽中断 */
+    /* PRIMASK = 0     ↓ 普通中断允许响应  PRIMASK = 1     ↓ 普通中断被屏蔽 */
     primask = __get_PRIMASK();
+    /* 临时关闭中断 */
     __disable_irq();
 
     if (tim3_capture_pair_ready == 0U)
