@@ -5,6 +5,8 @@
 /* TIM2 是 16 位计数器，CNT 从 0 计到 65535 后回绕，因此每次溢出代表 65536 个脉冲。 */
 #define TIM2_COUNTER_RANGE 65536UL
 
+#define TIM3_CAPTURE_DMA_LENGTH 2U
+
 /* TIM2 在当前 1 秒闸门测量期间发生的溢出次数，用于把 16 位 CNT 扩展为更大的总脉冲计数。 */
 static volatile uint32_t frequency_counter_overflow_count = 0U;
 
@@ -16,6 +18,21 @@ static volatile uint8_t frequency_counter_ready = 0U;
 
 /* 高频闸门计数运行状态：0 表示未测量，1 表示 TIM2/TIM4 正在进行一轮测量。 */
 static volatile uint8_t frequency_counter_running = 0U;
+
+/* TIM3_CH1 输入捕获 DMA 缓冲区。
+ * 每次 PA6 出现上升沿，TIM3 会把 CNT 锁存到 CCR1，
+ * DMA 再把 CCR1 自动搬到该数组。
+ */
+static uint16_t tim3_capture_dma_buffer[TIM3_CAPTURE_DMA_LENGTH] = {0U, 0U};
+
+/* 最近一次完整 DMA 采集得到的第一个 CCR1 时间戳。 */
+static volatile uint16_t tim3_capture_first = 0U;
+
+/* 最近一次完整 DMA 采集得到的第二个 CCR1 时间戳。 */
+static volatile uint16_t tim3_capture_second = 0U;
+
+/* 两个输入捕获值是否已经采集完成。 */
+static volatile uint8_t tim3_capture_pair_ready = 0U;
 
 /**
  * @brief 启动 1MHz 自校时标输出。
@@ -97,6 +114,38 @@ uint32_t MeasurementHw_FrequencyCounterGetCount(void)
 }
 
 /**
+ * @brief 启动 TIM3_CH1 输入捕获 DMA。
+ *
+ * PA6 每出现一个上升沿，TIM3 硬件会把当前 CNT 锁存到 CCR1，
+ * DMA1 Channel 6 再把 CCR1 自动搬入 tim3_capture_dma_buffer。
+ *
+ * 当前 DMA 使用 Circular 模式，每两个捕获值组成一组。
+ *
+ * @return 启动成功返回 1，否则返回 0。
+ */
+uint8_t MeasurementHw_PeriodCaptureStart(void)
+{
+    tim3_capture_first = 0U;
+    tim3_capture_second = 0U;
+    tim3_capture_pair_ready = 0U;
+
+    __HAL_TIM_SET_COUNTER(&htim3, 0U);
+    __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_CC1);
+    __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
+
+    if (HAL_TIM_IC_Start_DMA(
+            &htim3,
+            TIM_CHANNEL_1,
+            (uint32_t *)tim3_capture_dma_buffer,
+            TIM3_CAPTURE_DMA_LENGTH) != HAL_OK)
+    {
+        return 0U;
+    }
+
+    return 1U;
+}
+
+/**
  * @brief HAL 定时器周期到达回调，用于处理 TIM2 溢出扩展和 TIM4 闸门结束事件。
  *
  * TIM2 进入该回调时累计一次 16 位 CNT 溢出；TIM4 进入该回调时关闭本轮计数、
@@ -147,3 +196,24 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         frequency_counter_ready = 1U;
     }
 }
+
+/**
+ * @brief TIM 输入捕获 DMA 完成回调。
+ *
+ * TIM3_CH1 的 DMA 每收集两个 CCR1 值后进入该回调，
+ * 将 DMA 缓冲区中的两个捕获时间戳锁存出来，供上层读取。
+ *
+ * @param htim 触发本次回调的定时器句柄。
+ */
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
+{
+    if ((htim->Instance == TIM3) &&
+        (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1))
+    {
+        tim3_capture_first = tim3_capture_dma_buffer[0];
+        tim3_capture_second = tim3_capture_dma_buffer[1];
+
+        tim3_capture_pair_ready = 1U;
+    }
+}
+
