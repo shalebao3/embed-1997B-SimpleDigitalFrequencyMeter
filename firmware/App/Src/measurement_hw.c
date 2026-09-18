@@ -47,16 +47,14 @@ static volatile uint8_t frequency_counter_running = 0U;
 static volatile uint16_t tim3_capture_dma_buffer[TIM3_CAPTURE_DMA_LENGTH] = {0U, 0U};
 
 /* 最近一次完整 DMA 采集得到的第一个 CCR1 原始时间戳。
- * 数值含义：
- * 0U：初始化后的默认值；只有 tim3_capture_pair_ready == 1U 时才代表一组新数据中的第一个捕获值。
- * 1U~65535U：第一次上升沿对应的 TIM3 CCR1 原始 16 位计数值。
+ * 数值范围：0U~65535U，表示第一次上升沿对应的 TIM3 CCR1 原始 16 位计数值。
+ * 注意：0U 也可能是真实捕获值；是否存在一组新数据必须结合 tim3_capture_pair_ready 判断。
  */
 static volatile uint16_t tim3_capture_first = 0U;
 
 /* 最近一次完整 DMA 采集得到的第二个 CCR1 原始时间戳。
- * 数值含义：
- * 0U：初始化后的默认值；只有 tim3_capture_pair_ready == 1U 时才代表一组新数据中的第二个捕获值。
- * 1U~65535U：第二次上升沿对应的 TIM3 CCR1 原始 16 位计数值。
+ * 数值范围：0U~65535U，表示第二次上升沿对应的 TIM3 CCR1 原始 16 位计数值。
+ * 注意：0U 也可能是真实捕获值；是否存在一组新数据必须结合 tim3_capture_pair_ready 判断。
  */
 static volatile uint16_t tim3_capture_second = 0U;
 
