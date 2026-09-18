@@ -3,16 +3,14 @@
 #include "measurement_hw.h"
 
 /* 最近一次从 measurement_hw 消费到的第一个 CCR1 原始捕获值。
- * 数值含义：
- * 0U：初始化后的默认值；只有 interval_capture_valid == 1U 时该值才代表有效捕获结果。
- * 1U~65535U：第一次上升沿到来时 TIM3 CNT 被硬件锁存到 CCR1 的原始 16 位计数值。
+ * 数值范围：0U~65535U，表示第一次上升沿到来时 TIM3 CNT 被硬件锁存到 CCR1 的原始 16 位计数值。
+ * 注意：0U 既可能是初始化默认值，也可能是真实捕获值；是否有效必须结合 interval_capture_valid 判断。
  */
 static uint16_t interval_capture_first = 0U;
 
 /* 最近一次从 measurement_hw 消费到的第二个 CCR1 原始捕获值。
- * 数值含义：
- * 0U：初始化后的默认值；只有 interval_capture_valid == 1U 时该值才代表有效捕获结果。
- * 1U~65535U：第二次上升沿到来时 TIM3 CNT 被硬件锁存到 CCR1 的原始 16 位计数值。
+ * 数值范围：0U~65535U，表示第二次上升沿到来时 TIM3 CNT 被硬件锁存到 CCR1 的原始 16 位计数值。
+ * 注意：0U 既可能是初始化默认值，也可能是真实捕获值；是否有效必须结合 interval_capture_valid 判断。
  */
 static uint16_t interval_capture_second = 0U;
 
