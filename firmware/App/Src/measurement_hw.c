@@ -318,13 +318,6 @@ uint8_t MeasurementHw_PeriodCaptureStart(void)
     __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_CC1);
     __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
 
-    /* CubeMX 当前把 DMA1_Channel6 和 TIM3 IRQ 都配置为同一优先级。
-     * 为了处理捕获与回绕几乎同时发生的边界情况，这里在自定义层明确让 DMA 高于 TIM3 Update：
-     * DMA 先锁存“捕获属于哪一圈”，TIM3 Update ISR 再更新实时总圈数。
-     */
-    HAL_NVIC_SetPriority(DMA1_Channel6_IRQn, 0U, 0U);
-    HAL_NVIC_SetPriority(TIM3_IRQn, 1U, 0U);
-
     /* TIM3_CH1 使用 DMA 搬运 CCR1；这里额外打开 Update 中断，只用于累计 CNT 回绕次数。 */
     __HAL_TIM_ENABLE_IT(&htim3, TIM_IT_UPDATE);
 
