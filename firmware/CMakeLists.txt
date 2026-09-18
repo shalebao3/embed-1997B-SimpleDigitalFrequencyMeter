@@ -49,6 +49,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/Src/self_calibration.c
     App/Src/measurement_hw.c
     App/Src/frequency_meter.c
+    App/Src/interval_meter.c
 )
 
 # Add include paths
