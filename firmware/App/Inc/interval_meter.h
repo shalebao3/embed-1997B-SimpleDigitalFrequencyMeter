@@ -13,7 +13,7 @@ uint8_t IntervalMeter_Init(void);
  * @brief 轮询并消费最新一组 TIM3 DMA 原始捕获值。
  *
  * 当前阶段会把 CCR1 与对应的 TIM3 溢出圈数组合成完整时间戳，
- * 计算两个上升沿之间的 delta_ticks，并换算得到周期 ns；暂不计算频率。
+ * 计算两个上升沿之间的 delta_ticks，并换算得到周期 ns 和频率 mHz。
  */
 void IntervalMeter_Task(void);
 
@@ -67,5 +67,11 @@ uint64_t IntervalMeter_GetDeltaTicks(void);
  * @return 周期，单位为 ns；尚无有效结果时返回 0。
  */
 uint64_t IntervalMeter_GetPeriodNs(void);
+
+/**
+ * @brief 获取最近一组两个上升沿对应的周期法频率。
+ * @return 频率，单位为 mHz；尚无有效结果时返回 0。
+ */
+uint64_t IntervalMeter_GetFrequencyMilliHz(void);
 
 #endif
