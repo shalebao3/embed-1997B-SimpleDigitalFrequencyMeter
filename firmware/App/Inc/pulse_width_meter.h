@@ -17,6 +17,12 @@ uint8_t PulseWidthMeter_Init(void);
 void PulseWidthMeter_Task(void);
 
 /**
+ * @brief 启用或暂停脉宽下降沿捕获。
+ * @param enabled 非 0 启用；0 暂停。
+ */
+void PulseWidthMeter_SetEnabled(uint8_t enabled);
+
+/**
  * @brief 判断当前是否已有有效脉冲宽度结果。
  * @return 有效返回 1，否则返回 0。
  */
