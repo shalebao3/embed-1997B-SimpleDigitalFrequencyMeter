@@ -8,6 +8,46 @@
 
 ---
 
+## 软件工程结构
+
+自定义代码目录已与 `embed-stm32c8t6-template` 的分层语义对齐。这个仓库仍然是 CubeMX + HAL 工程，因此 CubeMX 生成的 `Core/`、`Drivers/` 和 `cmake/stm32cubemx/` 保持原位，不把生成代码强行搬进模板的 `src/user`。
+
+```text
+firmware/
+├── Core/                       # CubeMX 生成：main、中断、GPIO/TIM/DMA 初始化
+├── Drivers/                    # STM32 HAL / CMSIS
+├── src/
+│   ├── app/                    # 赛题业务、测量算法、状态机、UI 调度
+│   │   ├── instrument.*
+│   │   ├── frequency_auto.*
+│   │   ├── frequency_meter.*
+│   │   ├── interval_meter.*
+│   │   ├── pulse_width_meter.*
+│   │   ├── self_calibration.*
+│   │   └── instrument_ui.*
+│   ├── driver/
+│   │   └── measurement_hw.*    # TIM / DMA / Capture / Gate 等片内外设测量驱动
+│   ├── bsp/
+│   │   └── instrument_ui_port.*# 显示、LED、刷新旋钮等板级硬件端口
+│   └── common/                 # 与具体赛题无关的通用组件（当前暂无）
+└── CMakeLists.txt
+```
+
+依赖方向保持为：
+
+```text
+Core/main
+   ↓
+app
+ ├────→ driver
+ ├────→ bsp
+ └────→ common
+```
+
+这次重构只调整目录与构建引用，**不改变测频、周期、脉宽、DMA、溢出扩展和高低频自动切换算法**。
+
+---
+
 ## 1. 题目要求
 
 ### 1.1 基本要求
